@@ -1,7 +1,9 @@
 import os
+import re
 import json
 import sys
 import asyncio
+import subprocess
 import requests
 from getpass import getpass
 
@@ -44,6 +46,21 @@ END_POSITION_OFFSET = 0
 # Change this path to customize where transcriptions are saved
 # Default: Desktop/Audible Transcriptions
 TRANSCRIPTION_OUTPUT_PATH = os.path.join(os.path.expanduser("~"), "Desktop", "Audible Transcriptions")
+
+# Characters that break filesystem paths (and ffmpeg/shell) across macOS, Linux, Windows
+_UNSAFE_PATH_CHARS = re.compile(r"[:?\"/\\<>|*']")
+
+def sanitize_title(raw_title):
+    """Turn a book title into a safe, lowercase, underscore-joined path component.
+
+    Strips filesystem-hostile characters (: ? ' " / \\ < > | *) so the same title
+    always maps to the same path everywhere it's used (download, convert, read).
+    """
+    title = _UNSAFE_PATH_CHARS.sub("", raw_title)
+    title = title.lower().replace(" ", "_")
+    # collapse any runs of underscores left behind by removed chars
+    title = re.sub(r"_+", "_", title).strip("_")
+    return title
 
 class AudibleAPI:
 
@@ -147,7 +164,7 @@ class AudibleAPI:
                 print(book["item"]["title"])
                 asin = book["item"]["asin"]
                 raw_title = book["item"]["title"]
-                title = raw_title.lower().replace(" ", "_")
+                title = sanitize_title(raw_title)
                 all_books[asin] = title
 
                 # Attempt to download book
@@ -258,7 +275,7 @@ class AudibleAPI:
         if not _title:
             return
 
-        title = _title.lower().replace(" ", "_")
+        title = sanitize_title(_title)
 
         bookmarks_url = f"https://cde-ta-g7g.amazon.com/FionaCDEServiceEngine/sidecar?type=AUDI&key={asin}"
         print(f"Getting bookmarks for {_title}")
@@ -331,19 +348,22 @@ class AudibleAPI:
             if not _title:
                 return
 
-            title = _title.replace(" ", "_").lower()
+            title = sanitize_title(_title)
             # Strips Audible DRM  from audiobook
             activation_bytes = self.get_activation_bytes()
             title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
             title_aax_path = os.path.join(title_dir_path, f"{title}.aax")
             title_m4b_path = os.path.join(title_dir_path, f"{title}.m4b")
             title_mp3_path = os.path.join(title_dir_path, f"{title}.mp3")
-            os.system(
-                f"ffmpeg -activation_bytes {activation_bytes} -i {title_aax_path} -c copy {title_m4b_path}")
+            subprocess.run(
+                ["ffmpeg", "-activation_bytes", activation_bytes,
+                 "-i", title_aax_path, "-c", "copy", title_m4b_path],
+                check=True)
 
             # Converts audiobook to .mp3
-            os.system(
-                f"ffmpeg -i {title_m4b_path} {title_mp3_path}")
+            subprocess.run(
+                ["ffmpeg", "-i", title_m4b_path, title_mp3_path],
+                check=True)
 
     async def cmd_transcribe_bookmarks(self, openai_api_key=None):
         li_books = await self.get_book_selection()
@@ -366,7 +386,7 @@ class AudibleAPI:
             _title = book.get("title", {}).get("title", {})
             _authors = book.get("title", {}).get("authors", {})
             allAuthors = ", ".join(item['name'] for item in _authors)
-            title = _title.lower().replace(" ", "_")
+            title = sanitize_title(_title)
             title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
             clips_dir_path = os.path.join(title_dir_path, "clips")
             directory = os.fsencode(clips_dir_path)
@@ -546,7 +566,7 @@ class AudibleAPI:
         }
 
         # Prepare file paths for checking
-        title = book_item.get("title", "untitled").lower().replace(" ", "_")
+        title = sanitize_title(book_item.get("title", "untitled"))
         title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
         title_aax_path = os.path.join(title_dir_path, f"{title}.aax")
         title_mp3_path = os.path.join(title_dir_path, f"{title}.mp3")
@@ -632,7 +652,7 @@ class AudibleAPI:
 
             asin = book_info["item"]["asin"]
             raw_title = book_info["item"]["title"]
-            title = raw_title.lower().replace(" ", "_")
+            title = sanitize_title(raw_title)
 
             print(f"Downloading: {raw_title}")
 
@@ -682,7 +702,7 @@ class AudibleAPI:
         try:
             # Extract title from nested structure
             _title = book.get("title", {}).get("title", "untitled")
-            title = _title.replace(" ", "_").lower()
+            title = sanitize_title(_title)
 
             activation_bytes = self.get_activation_bytes()
             title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
@@ -691,10 +711,15 @@ class AudibleAPI:
             title_mp3_path = os.path.join(title_dir_path, f"{title}.mp3")
 
             print(f"Converting {_title} to M4B...")
-            os.system(f"ffmpeg -activation_bytes {activation_bytes} -i {title_aax_path} -c copy {title_m4b_path}")
+            subprocess.run(
+                ["ffmpeg", "-activation_bytes", activation_bytes,
+                 "-i", title_aax_path, "-c", "copy", title_m4b_path],
+                check=True)
 
             print(f"Converting {_title} to MP3...")
-            os.system(f"ffmpeg -i {title_m4b_path} {title_mp3_path}")
+            subprocess.run(
+                ["ffmpeg", "-i", title_m4b_path, title_mp3_path],
+                check=True)
 
         except Exception as e:
             print(f"Error converting book: {e}")
@@ -718,7 +743,7 @@ class AudibleAPI:
             _authors = book.get("title", {}).get("authors", [])
             allAuthors = ", ".join(item['name'] for item in _authors) if _authors else ""
 
-            title = _title.lower().replace(" ", "_")
+            title = sanitize_title(_title)
             title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
             clips_dir_path = os.path.join(title_dir_path, "clips")
             directory = os.fsencode(clips_dir_path)
