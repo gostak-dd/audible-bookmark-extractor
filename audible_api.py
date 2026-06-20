@@ -14,7 +14,7 @@ from pydub import AudioSegment
 import speech_recognition as sr
 from openai import OpenAI
 
-from errors import ExternalError
+from errors import ExternalError, DownloadUnavailableError
 from constants import artifacts_root_directory
 
 # not currently in use, but so the user can choose their store
@@ -151,6 +151,9 @@ class AudibleAPI:
                     ExternalError(self.get_download_url,
                                   asin, e).show_error()
                     continue
+                except DownloadUnavailableError as e:
+                    print(f"Skipping '{raw_title}': {e}")
+                    continue
 
                 audible_response = requests.get(re, stream=True)
 
@@ -193,19 +196,24 @@ class AudibleAPI:
         if asin and url_type == "download":
             return f"{AUDIBLE_URL_BASE}{country_code_mapping.get(country_code)}/library/download?asin={asin}&codec=AAX"
 
-    # Need the next_request for Audible API to give us the download link for the book
+    # We need the raw response so we can inspect whether Audible actually issued
+    # a redirect to the download link, rather than blindly following one
     def get_download_link_callback(self, resp):
-        return resp.next_request
+        return resp
 
     # Sends a request to get the download link for the selected book
     def get_download_url(self, url, **kwargs):
 
         with audible.Client(auth=self.auth, response_callback=self.get_download_link_callback) as client:
-            library = client.get(
+            resp = client.get(
                 url,
                 **kwargs
             )
-            return library.url
+            # Audible only redirects to the actual file when the title supports
+            # direct AAX download; some titles (e.g. AAXC-only) respond without one
+            if resp.next_request is None:
+                raise DownloadUnavailableError(resp.status_code, resp.text)
+            return resp.next_request.url
 
     async def cmd_list_books(self):
         if not self.books:
