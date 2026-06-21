@@ -1,0 +1,19 @@
+[project]
+name = "audible-bookmark-extractor"
+version = "0.1.0"
+description = "Extract, transcribe, and export Audible bookmarks/clips to Notion, Readwise, and Markdown."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "audible>=0.8.2",
+    "httpx>=0.23.3,<0.24",
+    "openai>=2.6.1",
+    "pandas>=2.3.3",
+    "pydub>=0.25.1",
+    "requests>=2.32.5",
+    "SpeechRecognition>=3.14.3",
+    "xlsxwriter>=3.2.9",
+]
+
+[tool.uv]
+package = false
