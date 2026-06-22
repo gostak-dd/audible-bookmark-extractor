@@ -2,14 +2,13 @@ import os
 import json
 import sys
 import asyncio
+import subprocess
 import requests
 from getpass import getpass
 
 import pandas as pd
 import pandas.io.formats.excel
 import audible
-
-from pydub import AudioSegment
 
 import speech_recognition as sr
 from openai import OpenAI
@@ -275,13 +274,7 @@ class AudibleAPI:
                 li_bookmarks, key=lambda i: i["type"], reverse=True)
 
             title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
-            title_aax_path = os.path.join(title_dir_path, f"{title}.aax")
-            title_m4b_path = os.path.join(title_dir_path, f"{title}.m4b")
             title_mp3_path = os.path.join(title_dir_path, f"{title}.mp3")
-
-            # Load audiobook into AudioSegment so we can slice it
-            audio_book = AudioSegment.from_mp3(
-                title_mp3_path)
 
             file_counter = 1
             notes_dict = {}
@@ -303,22 +296,31 @@ class AudibleAPI:
                         f"CLIP: {notes_dict[raw_start_pos]}  {raw_start_pos}")
 
                 if audio_clip.get("type", None) in ["audible.clip", "audible.bookmark"]:
-                    start_pos = raw_start_pos - START_POSITION_OFFSET
+                    start_pos = max(0, raw_start_pos - START_POSITION_OFFSET)
                     end_pos = int(audio_clip.get(
                         "endPosition", raw_start_pos + 30000)) + END_POSITION_OFFSET
                     if start_pos == end_pos:
                         end_pos += 30000
 
-                    # Slice it up
-                    clip = audio_book[start_pos:end_pos]
-
                     file_name = notes_dict.get(
                         raw_start_pos, f"clip{file_counter}")
 
-                    # Save the clip
+                    # Extract the clip directly with ffmpeg (seek + duration) instead of
+                    # decoding the whole multi-hour audiobook into memory with pydub first
                     clip_path = os.path.join(clips_dir_path, f"{file_name}.flac")
-                    clip.export(
-                        clip_path, format="flac")
+                    try:
+                        subprocess.run(
+                            ["ffmpeg", "-y",
+                             "-ss", str(start_pos / 1000),
+                             "-i", title_mp3_path,
+                             "-t", str((end_pos - start_pos) / 1000),
+                             clip_path],
+                            check=True,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+                    except subprocess.CalledProcessError as e:
+                        print(f"Error extracting clip '{file_name}': {e}")
+                        continue
                     file_counter += 1
 
     async def cmd_convert_audiobook(self):

@@ -37,7 +37,6 @@ pycodestyle==2.8.0
 pycparser==2.21
 pydantic==2.12.3
 pydantic_core==2.41.4
-pydub==0.25.1
 python-dateutil==2.9.0.post0
 pytz==2025.2
 requests==2.32.5
